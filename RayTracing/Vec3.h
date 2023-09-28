@@ -156,6 +156,29 @@ public:
 		return dot(on_unit_sphere, normal) > 0 ? on_unit_sphere : -on_unit_sphere;
 	}
 
+	/// <summary>
+	/// 返回单位圆上的随机向量，不支持多线程
+	/// </summary>
+	/// <returns></returns>
+	static vec3 random_in_unit_circle() {
+		auto distance = random_double();
+		auto degree = random_double(0, 2 * pi);
+		//auto vec = vec3(cos(degree), sin(degree), 0);
+		return vec3(cos(degree), sin(degree), 0) * distance;
+	}
+
+	/// <summary>
+	/// 返回单位圆上的随机向量，支持多线程
+	/// </summary>
+	/// <param name="generator"></param>
+	/// <returns></returns>
+	static vec3 random_in_unit_circle(random_double_generator& generator) {
+		auto distance = generator.get_random_double();
+		auto degree = generator.get_random_double(0, 2*pi);
+		//auto vec = vec3(cos(degree), sin(degree), 0);
+		return vec3(cos(degree), sin(degree), 0) * distance;
+	}
+
 	#pragma endregion
 
 	inline bool near_zero() const {
@@ -171,9 +194,11 @@ using point3 = vec3;
 
 //inline vec3 operator*(const vec3& u, double t) { return vec3(u.e[0] * t, u.e[1] * t, u.e[2] * t); }
 inline vec3 operator*(double t, const vec3& u) { return u * t; }
+inline vec3 operator*(double t, vec3& u) { return u * t; }
 
 //inline vec3 operator/(const vec3& u, double t) { return vec3(u.e[0] / t, u.e[1] / t, u.e[2] / t); }
 inline vec3 operator/(double t, const vec3& u) { return u / t; }
+inline vec3 operator/(double t, vec3& u) { return u / t; }
 
 
 /// <summary>

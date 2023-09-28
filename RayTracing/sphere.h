@@ -52,7 +52,8 @@ public:
 
 		rec.t = root;
 		rec.p = r.at(root);
-		auto outward_normal = (rec.p - center).normalized();
+		//auto outward_normal = (rec.p - center).normalized();
+		auto outward_normal = (rec.p - center) / radius;
 		rec.set_face_normal(r, outward_normal);
 		rec.material_of_hit = material_surface;
 

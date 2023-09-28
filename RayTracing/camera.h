@@ -33,6 +33,16 @@ private:
     /// </summary>
     double min_distance = 0.001;
 
+    /// <summary>
+    /// 相机本身的三个坐标轴在世界空间的坐标
+    /// u向右，v向上，w向观察方向中轴反方向
+    /// </summary>
+    vec3 u, v, w;
+
+
+    vec3 defocus_disk_u;
+    vec3 defocus_disk_v;
+
     #pragma endregion
 
     #pragma region 初始化
@@ -41,22 +51,34 @@ private:
         image_height = static_cast<int>(image_width / aspect_ratio);
         image_height = image_height < 1 ? 1 : image_height;
         
-        center = point3(0, 0, 0);
+        center = lookfrom;
 
         #pragma region 计算视口
 
-        auto focal_length = 1;
-        auto viewport_height = 2.0;
+        //auto focal_length = (lookat - lookfrom).length();
+        auto theta = degrees_to_radians(vfov);
+        auto h = tan(theta / 2);
+        auto viewport_height = 2 * h * focus_dist;
         auto viewport_width = viewport_height * (static_cast<double>(image_width) / image_height);
 
-        auto viewport_u = vec3(viewport_width, 0, 0);
-        auto viewport_v = vec3(0, -viewport_height, 0);
+        #pragma region 计算相机坐标系
+        w = (lookfrom - lookat).normalized();
+        u = vec3::cross(vup, w).normalized();
+        v = vec3::cross(w, u).normalized();
+        #pragma endregion
+
+        auto viewport_u = viewport_width * u;
+        auto viewport_v = viewport_height * (-v);
 
         pixel_delta_u = viewport_u / image_width;
         pixel_delta_v = viewport_v / image_height;
 
-        auto viewport_upper_left = center - vec3(0, 0, focal_length) - viewport_u / 2 - viewport_v / 2;
+        auto viewport_upper_left = center - (focus_dist * w) - viewport_u / 2 - viewport_v / 2;
         pixel00_loc = viewport_upper_left + 0.5 * (pixel_delta_u + pixel_delta_v);
+
+        auto defocus_radius = focus_dist * tan(degrees_to_radians(defocus_angle / 2));
+        defocus_disk_u = u * defocus_radius;
+        defocus_disk_v = v * defocus_radius;
 
         #pragma endregion
 
@@ -120,7 +142,7 @@ private:
     }
 
     /// <summary>
-    /// 获得打向像素块(i, j)中心叠加像素内偏移的光线
+    /// 获得打向像素块(i, j)中心叠加像素内偏移的光线，不支持多线程
     /// </summary>
     /// <param name="i"></param>
     /// <param name="j"></param>
@@ -129,22 +151,29 @@ private:
         auto pixel_center = pixel00_loc + (i * pixel_delta_u) + (j * pixel_delta_v);
         auto pixel_sample = pixel_center + pixel_sample_square();
 
-        auto ray_origin = center;
-        auto ray_direction = pixel_sample - ray_origin;
-        return ray(ray_origin, ray_direction);
-    }
-
-    ray get_ray(int i, int j, random_double_generator& generator) const {
-        auto pixel_center = pixel00_loc + (i * pixel_delta_u) + (j * pixel_delta_v);
-        auto pixel_sample = pixel_center + pixel_sample_square(generator);
-
-        auto ray_origin = center;
+        auto ray_origin = (defocus_angle <= 0) ? center : defocus_disk_sample();
         auto ray_direction = pixel_sample - ray_origin;
         return ray(ray_origin, ray_direction);
     }
 
     /// <summary>
-    /// 返回基于像素中点的偏移
+    /// 获得打向像素块(i, j)中心叠加像素内偏移的光线，支持多线程
+    /// </summary>
+    /// <param name="i"></param>
+    /// <param name="j"></param>
+    /// <param name="generator"></param>
+    /// <returns></returns>
+    ray get_ray(int i, int j, random_double_generator& generator) const {
+        auto pixel_center = pixel00_loc + (i * pixel_delta_u) + (j * pixel_delta_v);
+        auto pixel_sample = pixel_center + pixel_sample_square(generator);
+
+        auto ray_origin = (defocus_angle <= 0) ? center : defocus_disk_sample(generator);
+        auto ray_direction = pixel_sample - ray_origin;
+        return ray(ray_origin, ray_direction);
+    }
+
+    /// <summary>
+    /// 返回基于像素中点的偏移，不支持多线程
     /// </summary>
     /// <returns></returns>
     vec3 pixel_sample_square() const {
@@ -153,10 +182,34 @@ private:
         return (px * pixel_delta_u) + (py * pixel_delta_v);
     }
 
+    /// <summary>
+    /// 返回基于像素中点的偏移，支持多线程
+    /// </summary>
+    /// <param name="generator"></param>
+    /// <returns></returns>
     vec3 pixel_sample_square(random_double_generator& generator) const {
         auto px = -0.5 + generator.get_random_double();
         auto py = -0.5 + generator.get_random_double();
         return (px * pixel_delta_u) + (py * pixel_delta_v);
+    }
+
+    /// <summary>
+    /// 返回焦散盘上随机一点，不支持多线程
+    /// </summary>
+    /// <returns></returns>
+    point3 defocus_disk_sample() const {
+        auto p = vec3::random_in_unit_circle();
+        return center + (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
+    }
+
+    /// <summary>
+    /// 返回焦散盘上随机一点，支持多线程
+    /// </summary>
+    /// <param name="generator"></param>
+    /// <returns></returns>
+    point3 defocus_disk_sample(random_double_generator& generator) const {
+        auto p = vec3::random_in_unit_circle(generator);
+        return center + (p[0] * defocus_disk_u) + (p[1] * defocus_disk_v);
     }
 
     #pragma endregion
@@ -169,6 +222,35 @@ public:
     int image_width = 100;
     int samples_per_pixel = 100;
     int max_depth = 10;
+    /// <summary>
+    /// 纵向视口角度
+    /// </summary>
+    double vfov = 90;
+
+    /// <summary>
+    /// 相机的朝向由几个变量决定：相机的坐标lookfrom，相机看向的坐标lookat，以及相机的上方向的朝向vup
+    /// 此时，我们可以确定一个坐标系(u, v, w)，其中u指向相机右侧，v指向相机上方，w指向相机观察方向的反方向（这里采用的是右手系观测）
+    /// </summary>
+    
+    point3 lookfrom = point3(0, 0, -1);
+    point3 lookat = point3(0, 0, 0);
+    vec3 vup = vec3(0, 1, 0);
+
+    /// <summary>
+    /// 相机景深设置。
+    /// 景深的实现原理是光线在一个一定大小的圆盘上随机发出打向观察点，观察点所在的垂直w轴的平面
+    /// 是相机的焦平面，所有光线都会打到预期物体上，不会失真
+    /// 观察点离焦平面越远，打在同一焦平面像素的光线分散越广，从而越模糊
+    /// </summary>
+
+    /// <summary>
+    /// 焦平面中心点（lookat）看焦散盘（光线发出的盘）的角度，数值越大，焦散盘越大；等价于光圈大小，数值越大，相同距离的景深效果越大
+    /// </summary>
+    double defocus_angle;
+    /// <summary>
+    /// 焦平面到相机的距离
+    /// </summary>
+    double focus_dist;
 
     #pragma endregion
 
